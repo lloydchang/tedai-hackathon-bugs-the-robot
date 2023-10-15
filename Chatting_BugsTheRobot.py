@@ -95,19 +95,25 @@ def on_key_press(key):
         reset_flag = True  # リセットフラグを設定
 
 
+space_key_pressed = False
+
 def on_press(key):
-    global start_time, recording_list
+    global start_time, space_key_pressed  # space_key_pressed を global として追加
     if key == keyboard.Key.space:
-        if start_time is None:
+        if start_time is None and not space_key_pressed:  # space_key_pressed のチェックを追加
             start_time = True
+            ser.write(1)
+            space_key_pressed = True  # フラグを True に設定
             print("Space key pressed. Start recording...")
 
 def on_release(key):
-    global start_time, recording_list
+    global start_time, space_key_pressed  # space_key_pressed を global として追加
     if key == keyboard.Key.space:
         if start_time is not None:
             print("Space key released. Stop recording.")
+            ser.write(2)
             start_time = None
+            space_key_pressed = False  # フラグをリセット
             return False  # Stop the listener
 
 def record_while_key_pressed():
@@ -140,6 +146,11 @@ def main_loop():
     #initial_audio = AudioSegment.from_wav('starting.wav')
     #play(initial_audio)
     global reset_flag
+    
+    ser = serial.Serial('/dev/ttyUSB0', 9600)  # Check the port name using 'ls /dev/tty*'
+    time.sleep(2)  # Giving time for the connection to initialize
+    ser.write(0)   
+    
     while True:
 
         reset_flag = False  # リセットフラグをリセット
@@ -166,6 +177,11 @@ def main_loop():
             
             emotion = get_emotion(input_text)
             print(emotion)
+            
+            if emotion == "positive":
+                ser.write(3)  
+            elif emotion == "negative":
+                ser.write(4)  
 
             update_conversation(input_text, conversation)
             end_time = time.time()
