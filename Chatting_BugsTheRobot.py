@@ -12,10 +12,8 @@ from pynput import keyboard
 
 
 # API-key
-openai_api_key = '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'
-charactr_client_key = 'PbWoDcnUCOvPnGRXuMAMiWa4BWZomRKr'
-charactr_api_key = 'ytwjjrvvqEKJEupLKnNVVzcpnxtdo8wM'
-set_api_key('3a0328d1813a4ca551b3094039841779')
+openai_api_key = os.environ['OPENAI_API_KEY']
+set_api_key('<YOUR_API_KEY>')
 
 openai.api_key = openai_api_key
 
