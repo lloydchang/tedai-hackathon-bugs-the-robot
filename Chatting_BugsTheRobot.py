@@ -4,7 +4,6 @@ import numpy as np
 import sounddevice as sd
 from pydub import AudioSegment
 from pydub.playback import play
-from charactr_api import CharactrAPISDK, Credentials
 from elevenlabs import generate, play, set_api_key
 import time
 from pynput import keyboard
