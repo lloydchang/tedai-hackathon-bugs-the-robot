@@ -20,10 +20,9 @@ credentials = Credentials(client_key=charactr_client_key, api_key=charactr_api_k
 charactr_api = CharactrAPISDK(credentials)
 
 voice_id = 40 #177
-model = 'ft:gpt-3.5-turbo-0613:personal::89iZF8vT' #verRogers
+model = 'ft:gpt-3.5-turbo-0613:personal::89nWjpgS' #verRogers
 model_em = 'gpt-3.5-turbo'
-#model = 'ft:gpt-3.5-turbo-0613:personal:therapy:7wwjFO6A'
-#model = 'ft:gpt-3.5-turbo-0613:personal:cat-ckd:7wFHWVm8'
+
 parameters = {
     'temperature': 0.8,
     'max_tokens': 35,
