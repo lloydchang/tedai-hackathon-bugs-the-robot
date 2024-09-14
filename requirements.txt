@@ -4,3 +4,4 @@ sounddevice
 pydub
 elevenlabs
 pynput
+pyserial

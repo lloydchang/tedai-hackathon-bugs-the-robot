@@ -1,26 +1,31 @@
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+
 import json
-import openai
+import os
+from openai import OpenAI
 import numpy as np
 import sounddevice as sd
 from pydub import AudioSegment
-from pydub.playback import play
-from elevenlabs import generate, play, set_api_key, Voice
+from pydub.playback import play as pydub_play
+from elevenlabs import text_to_speech
+from elevenlabs.client import ElevenLabs
 import time
 from pynput import keyboard
-#import whisper
-
+import serial
+import serial.tools.list_ports
 
 # API-key
 openai_api_key = os.environ['OPENAI_API_KEY']
-set_api_key('<YOUR_API_KEY>')
+ElevenLabs.api_key = os.environ['ELEVENLABS_API_KEY']
 
-openai.api_key = openai_api_key
+client = OpenAI(api_key=openai_api_key)
 
-credentials = Credentials(client_key=charactr_client_key, api_key=charactr_api_key)
-charactr_api = CharactrAPISDK(credentials)
+client2 = ElevenLabs(
+  api_key=ElevenLabs.api_key
+)
 
-voice_id = 40 #177
-model = 'ft:gpt-3.5-turbo-0613:personal::89nWjpgS' #verRogers
+model = 'gpt-3.5-turbo'  # Use the standard GPT-3.5-turbo model
 model_em = 'gpt-3.5-turbo'
 
 parameters = {
@@ -47,41 +52,54 @@ When You grows up, they want to be a comedian and motivational speaker that make
 
 conversation = [{'role': 'system', 'content': system_message}]
 
-#wh_model = whisper.load_model("base.en")
+def get_available_ports():
+    return [port.device for port in serial.tools.list_ports.comports()]
+
+def initialize_serial():
+    available_ports = get_available_ports()
+    if not available_ports:
+        print("No serial ports found. Running without serial communication.")
+        return None
+
+    print("Available serial ports:")
+    for i, port in enumerate(available_ports):
+        print(f"{i + 1}. {port}")
+
+    while True:
+        try:
+            choice = int(input("Enter the number of the port to use (or 0 to run without serial): "))
+            if choice == 0:
+                return None
+            if 1 <= choice <= len(available_ports):
+                chosen_port = available_ports[choice - 1]
+                ser = serial.Serial(chosen_port, 9600)  # Check the port name using 'ls /dev/tty*'
+                print(f"Connected to {chosen_port}")
+                return ser
+            else:
+                print("Invalid choice. Please try again.")
+        except ValueError:
+            print("Invalid input. Please enter a number.")
 
 def speech2text(audio_path: str) -> str:
     """Run a request to Whisper to convert speech to text."""
     with open(audio_path, 'rb') as audio_f:
-        result = openai.Audio.transcribe('whisper-1', audio_f)
-    return result['text']
+        result = client.audio.transcriptions.create(model="whisper-1", file=audio_f)
+    return result.text
 
 def get_emotion(request):
     emotion_prompt = f'What is the sentiment of the following text? Give your answer as a single word, "positive", "negative", or "neutral". text:{request}'
-    
-    user_request = {'role': 'user', 'content': emotion_prompt}
-    result = openai.ChatCompletion.create(model=model_em, messages=[user_request], temperature=0)
-    return result.choices[0].message["content"]
 
+    user_request = {'role': 'user', 'content': emotion_prompt}
+    result = client.chat.completions.create(model=model_em, messages=[user_request], temperature=0)
+    return result.choices[0].message.content
 
 def update_conversation(request, conversation):
     user_request = {'role': 'user', 'content': request}
     conversation.append(user_request)
-    result = openai.ChatCompletion.create(model=model, messages=conversation, **parameters)
-    response = result['choices'][0]['message']['content'].strip()
+    result = client.chat.completions.create(model=model, messages=conversation, **parameters)
+    response = result.choices[0].message.content.strip()
     bot_response = {'role': 'assistant', 'content': response}
     conversation.append(bot_response)
-
-def record_audio():
-    duration = 5 #int(input("How many seconds would you like to record? "))
-    recording = sd.rec(int(duration * 44100), samplerate=44100, channels=1, dtype='int16')
-    sd.wait()
-    print("Recording stopped.")
-    return recording
-
-
-def wait_for_input():
-    """Wait for the user to press Enter."""
-    input("Press Enter to start recording...")
 
 start_time = None
 recording_list = []
@@ -93,24 +111,25 @@ def on_key_press(key):
         print("Esc key pressed. Resetting...")
         reset_flag = True  # リセットフラグを設定
 
-
 space_key_pressed = False
 
 def on_press(key):
-    global start_time, space_key_pressed  # space_key_pressed を global として追加
+    global start_time, space_key_pressed, ser  # space_key_pressed を global として追加
     if key == keyboard.Key.space:
         if start_time is None and not space_key_pressed:  # space_key_pressed のチェックを追加
             start_time = True
-            ser.write(b'1')
+            if ser:
+                ser.write(b'1')
             space_key_pressed = True  # フラグを True に設定
             print("Space key pressed. Start recording...")
 
 def on_release(key):
-    global start_time, space_key_pressed  # space_key_pressed を global として追加
+    global start_time, space_key_pressed, ser  # space_key_pressed を global として追加
     if key == keyboard.Key.space:
         if start_time is not None:
             print("Space key released. Stop recording.")
-            ser.write(b'2')
+            if ser:
+                ser.write(b'2')
             start_time = None
             space_key_pressed = False  # フラグをリセット
             return False  # Stop the listener
@@ -126,7 +145,7 @@ def record_while_key_pressed():
 
     with sd.InputStream(samplerate=fs, channels=1, dtype='int16') as stream:
         print("Press and hold the Space key to start recording...")
-        
+
         while True:
             audio_chunk, overflowed = stream.read(fs // 10)  # Read 100ms of audio data
 
@@ -139,31 +158,36 @@ def record_while_key_pressed():
     # Concatenate the list to a NumPy array and return
     return np.concatenate(recording_list, axis=0)
 
-
-
 def main_loop():
-    #initial_audio = AudioSegment.from_wav('starting.wav')
-    #play(initial_audio)
-    global reset_flag
-    
-    ser = serial.Serial('/dev/ttyUSB0', 9600)  # Check the port name using 'ls /dev/tty*'
-    time.sleep(2)  # Giving time for the connection to initialize
-    ser.write(b'0')   
-    
-    while True:
+    global reset_flag, ser
 
+    ser = initialize_serial()
+
+    if ser:
+        time.sleep(2)  # Giving time for the connection to initialize
+        ser.write(b'0')
+
+    while True:
         reset_flag = False  # リセットフラグをリセット
         # キーのリスナーを設定
         with keyboard.Listener(on_press=on_key_press) as listener: 
 
             # Record audio
             print("Recording audio...")
-            #audio_data = record_audio()
             audio_data = record_while_key_pressed()
             print("Recording complete.")
-            audio_segment = AudioSegment(audio_data.tobytes(), frame_rate=44100, sample_width=2, channels=1)
-            audio_segment.export("recording.wav", format="wav")
             
+            # Convert audio_data to bytes
+            audio_bytes = audio_data.tobytes()
+
+            audio_segment = AudioSegment(
+                audio_bytes,
+                frame_rate=44100,
+                sample_width=audio_data.dtype.itemsize,
+                channels=1
+            )
+            audio_segment.export("recording.wav", format="wav")
+
             # Convert speech to text
             start_time = time.time()
             input_text = speech2text("recording.wav")
@@ -173,41 +197,46 @@ def main_loop():
 
             # Get ChatGPT response
             start_time = time.time()
-            
+
             emotion = get_emotion(input_text)
             print(emotion)
-            
-            if emotion == "positive":
-                ser.write(b'3')  
-            elif emotion == "negative":
-                ser.write(b'4')  
+
+            if ser:
+                if emotion == "positive":
+                    ser.write(b'3')
+                elif emotion == "negative":
+                    ser.write(b'4')
 
             update_conversation(input_text, conversation)
             end_time = time.time()
             chat_gpt_time = end_time - start_time
-            
+
             # リセットフラグをチェック
             if reset_flag:
                 print("Resetting...")
                 continue  # ループの最初に戻る
 
-            # Convert text to speech
+            # Generate speech using the new ElevenLabs API
             start_time = time.time()
-            #tts_result = charactr_api.tts.convert(voice_id, conversation[-1]['content'])
-            tts_result = generate(text=conversation[-1]['content'], 
-                                  voice=Voice(voice_id='WbabSw27D2F6RfNGFsqw'), 
-                                  model='eleven_multilingual_v2')
+
+            audio_generator = client2.generate(
+                text=conversation[-1]['content'],  # The last response from ChatGPT
+                voice="EXAVITQu4vr4xnSDxMaL"  # Your specific voice ID
+            )
+
+            # Collect all chunks from the generator
+            audio_chunks = b''.join(chunk for chunk in audio_generator)
+
             end_time = time.time()
-            charactr_time = end_time - start_time
+            elevenlabs_time = end_time - start_time
 
-            #with open('response.wav', 'wb') as f:
-            #    f.write(tts_result['data'])
+            # Save the audio to a file
+            with open("response.wav", "wb") as f:
+                f.write(audio_chunks)
 
-            # Play the response
-            
-            #response_audio = AudioSegment.from_wav('response.wav')
-            #play(response_audio)
-            play(tts_result)
+            # Play the audio using pydub
+            audio_segment = AudioSegment.from_mp3("response.wav")
+            pydub_play(audio_segment)
 
             # リセットフラグをチェック
             if reset_flag:
@@ -217,15 +246,13 @@ def main_loop():
             # Print timings
             print(f"Time taken for Whisper transcription: {whisper_time:.2f} seconds")
             print(f"Time taken for ChatGPT response: {chat_gpt_time:.2f} seconds")
-            print(f"Time taken for CharactrAPI response: {charactr_time:.2f} seconds")
-            total_time = whisper_time + chat_gpt_time + charactr_time
+            print(f"Time taken for ElevenLabs response: {elevenlabs_time:.2f} seconds")
+            total_time = whisper_time + chat_gpt_time + elevenlabs_time
             print(f"Total Time for response: {total_time:.2f} seconds")
             print(" ")
             print(conversation[-1]['content'])
-            
-            print("\nReturning to waiting mode...\n")
 
-            #listener.join()  # リスナーを終了
+            print("\nReturning to waiting mode...\n")
 
 if __name__ == "__main__":
     main_loop()
